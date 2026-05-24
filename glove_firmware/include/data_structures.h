@@ -17,7 +17,29 @@
 
 #include <cstdint>
 #include <cstring>
+#ifndef UNIT_TEST
 #include <Arduino.h>
+#else
+// Stubs for native testing
+#ifndef PROGMEM
+#define PROGMEM
+#endif
+#include <cstdio>
+#include <cstdlib>
+#include <cstdarg>
+#define ps_malloc malloc
+// Minimal Serial stub
+struct _SerialStub {
+    void println(const char* s) { puts(s); }
+    void printf(const char* fmt, ...) {
+        va_list args;
+        va_start(args, fmt);
+        vprintf(fmt, args);
+        va_end(args);
+    }
+};
+static _SerialStub Serial;
+#endif
 
 // =============================================================================
 // Compile-Time Constants
@@ -222,7 +244,7 @@ namespace MuxChannels {
     static constexpr uint8_t HALL_SENSOR_2 = 2;   // Middle
     static constexpr uint8_t HALL_SENSOR_3 = 3;   // Ring
     static constexpr uint8_t HALL_SENSOR_4 = 4;   // Pinky
-    static constexpr uint8_t BNO085_IMU     = 7;  // Dedicated IMU bus
+    static constexpr uint8_t BNO085_IMU     = 5;  // Dedicated IMU bus (SD5/SC5)
 }
 
 // =============================================================================

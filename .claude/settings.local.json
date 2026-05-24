@@ -23,7 +23,15 @@
       "Bash(pip3 show *)",
       "mcp__context7__resolve-library-id",
       "mcp__context7__query-docs",
-      "Bash(jobs -l)"
+      "Bash(curl *)",
+      "Bash(timeout *)",
+      "Bash(id)",
+      "Bash(groups *)",
+      "Bash(lsblk *)",
+      "Bash(sudo -S *)",
+      "Bash(python3 *)",
+      "Bash(ln -s tests test)",
+      "Bash(protoc --version)"
     ]
   }
 }
