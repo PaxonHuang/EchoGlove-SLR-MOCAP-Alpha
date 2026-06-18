@@ -1,6 +1,6 @@
 # PROGRESS.md — Cross-Session State Tracker
 
-**Last updated**: 2026-05-22
+**Last updated**: 2026-05-28
 
 ---
 
@@ -128,7 +128,7 @@ ESP32-S3 connected to Ubuntu via USB CDC (`/dev/ttyACM0`). Hardware partially wi
 | 1 | Permission denied on `/dev/ttyACM0` | Installed udev rules (`/etc/udev/rules.d/99-platformio-udev.rules`), added to `dialout` group |
 | 2 | ESP32-S3 USB CDC Serial not outputting after boot | Added `-DARDUINO_USB_CDC_ON_BOOT=1` to `platformio.ini` |
 | 3 | Core dump checksum error blocking flash write | Erased flash with `pio run -t erase` before re-upload |
-| 4 | I2C scanner hanging (ESP-IDF blocking on NACK) | Reduced scan to minimal address tests (0x70, 0x4A, 0x22) |
+| 4 | I2C scanner hanging (ESP-IDF blocking on NACK) | Reduced scan to minimal address tests (0x70, 0x4B, 0x22) |
 | 5 | Build error: braces around scalar initializer for float | Removed `PROGMEM`, used double brace syntax `{{...}, ...}` for GestureSignature array |
 
 ### Hardware Configuration Update (2026-05-21)
@@ -136,8 +136,8 @@ ESP32-S3 connected to Ubuntu via USB CDC (`/dev/ttyACM0`). Hardware partially wi
 - **Pull-ups changed**: Main bus 5.1kΩ → **2kΩ** (closer to SOP 2.2kΩ spec, faster rise time at 400kHz)
 - **Channel fix**: Firmware `MuxChannels::BNO085_IMU` changed from 7 → **5** to match hardware wiring (SD5/SC5)
 - **Ch5 sub-bus pull-ups**: Installed **5.1kΩ** on SD5/SC5→3.3V for GY-BNO085
-- **Hardware clarification**: Using **PCA9548A** (NXP, register-compatible with TCA9548A) and **GY-BNO085** (Adafruit breakout, likely has onboard pull-ups)
-- **Ch0-4 sub-bus pull-ups**: Not installed (TMAG5273s not arrived). Main bus 2kΩ passes through PCA9548A internal switches — sufficient for testing.
+- **Hardware clarification**: MUX is **Adafruit TCA9548A 1-to-8 I2C Multiplexer Breakout** (not bare PCA9548A DIP chip). IMU is **7Semi GY-BNO085** module.
+- **Ch0-4 sub-bus pull-ups**: Not installed (TMAG5273s not arrived). Main bus 2kΩ passes through TCA9548A internal switches — sufficient for testing.
 
 ### Simulation Mode Implementation
 
@@ -162,60 +162,91 @@ SensorManager now falls back to synthetic data generation when TCA9548A is not d
 | `docs/HARDWARE_WIRING_DEBUG_GUIDE_DM40B.md` | Created — DM40B multimeter wiring verification guide |
 | `docs/SESSION_SUMMARY_2026-05-20_HARDWARE_DEBUG_SIMULATION.md` | Created — full session summary |
 
-### Hardware Issue — UNRESOLVED
+### Hardware Debug History — RESOLVED (2026-05-26)
 
-I2C devices (TCA9548A at 0x70, BNO085 at 0x4A) return NACK. Suspected causes:
-- Devices may not be powered (no LEDs visible)
-- Wiring not connected properly
-- ~~5.1kΩ pull-ups~~ → Fixed: now 2kΩ (appropriate for 400kHz Fast Mode at 3.3V)
-- ~~Channel mismatch (code=7, hardware=5)~~ → Fixed: code changed to channel 5
+**Systematic isolation testing revealed the root cause:**
 
-**Next action**: Follow DM40B multimeter wiring debug guide to verify physical connections
+| Date | Finding |
+|------|---------|
+| 2026-05-22 | First I2C mux (bare PCA9548A DIP-16) defective — internal SDA↔SCL short (0.82kΩ) |
+| 2026-05-24 | Discovered actual hardware is **Adafruit TCA9548A Breakout** (not bare PCA9548A) — corrected pinout assumptions |
+| 2026-05-25 | Second Adafruit TCA9548A also failed — all NACKs. Confirmed **defective module** via direct BNO085 bypass test |
+| 2026-05-25 | **BNO085 confirmed working** at address **0x4B** (not 0x4A) via direct I2C bypass. Firmware updated. |
+| 2026-05-26 | Third TCA9548A (PW548A TI chip) installed. Direct wire test: **TCA9548A confirmed ACK at 0x70** when bypassing breadboard. |
+
+**Root cause**: **Breadboard contact failure**. All 3 mux modules were likely functional — the breadboard's spring contacts degraded after multiple insertions/removals, causing intermittent I2C connections. Physical bus test (GPIO toggle + pull-up recovery) passed, but I2C protocol failed because the breadboard introduced resistance/intermittency at the signal level.
+
+**Key diagnostic evidence:**
+- Physical bus test: SDA/SCL toggle OK, recovery 0µs → pull-ups and GPIO healthy
+- Hardware I2C: all NACK/TIMEOUT → protocol-level failure
+- Bit-bang I2C: all NACK → same, not ESP32 peripheral issue
+- **Bypass breadboard with Dupont wires: TCA9548A found at 0x70 ✓** → breadboard confirmed as root cause
+
+**Current hardware status:**
+- **Adafruit TCA9548A (PW548A chip)**: **Working** — confirmed via direct Dupont wire connection
+- **BNO085**: Working at address **0x4B**. Firmware updated.
+- **TMAG5273 Hall sensors**: Not yet installed (awaiting new breadboard + sub-bus pull-ups)
+- **I2C bus**: Confirmed functional when bypassing breadboard
+
+**Action required**: Buy new breadboard, new Dupont wires, and reassemble. User purchasing tonight (2026-05-26).
 
 ---
 
 ## Active Work
 
-**Current**: Phase 3 — L1 Edge Inference (Edge Impulse MVP Path A)
+**Current**: Phase 5 Python Relay Server COMPLETE (133/133 tests). Hardware testing paused — user purchasing new components (breadboard, Dupont wires, TCA9548A, TMAG5273 replacements). Tomorrow: Phase 1–4 hardware re-verify.
 
-Simulation mode is operational. Can proceed with Edge Impulse data collection using synthetic data while hardware debugging continues in parallel.
+### Phase 5 Completion Summary (2026-05-28)
 
-### Priority: Path A — Edge Impulse MVP (快速验证)
+| Component | Tests | Status |
+|-----------|-------|--------|
+| Protobuf parser | 19/19 | Done |
+| UDP server | 23/23 | Done |
+| WebSocket manager | 15/15 | Done |
+| ST-GCN model | 27/27 | Done |
+| NLP grammar corrector | 15/15 | Done |
+| TTS engine | 13/13 | Done |
+| ConfidenceRouter | 11/11 | Done |
+| Integration tests | 10/10 | Done |
+| **Total** | **133/133** | **ALL GREEN** |
 
-Per SOP §6.1, ESP32 CSV output already compatible with `edge-impulse-data-forwarder`. Steps:
+New files created:
+- `src/confidence_router.py` — L1→L2 confidence-driven routing (extracted from UDPServer)
+- `tests/test_tts_engine.py` — TTS engine tests (mocked edge_tts via sys.modules injection)
+- `tests/test_confidence_router.py` — Router logic tests
+- `tests/test_integration.py` — FastAPI app lifecycle tests
 
-1. ✅ Install edge-impulse-cli: `npm install -g edge-impulse-cli`
-2. ✅ Firmware outputs CSV in simulation mode (20 gesture classes)
-3. **→ NEXT**: Start data forwarder: `edge-impulse-data-forwarder --baud-rate 115200 --frequency 100`
-4. Collect labeled gesture data in Edge Impulse Studio (30-60 samples per gesture)
-5. Train 1D-CNN classifier (200 epochs, lr=0.001)
-6. Export as Arduino Library → integrate via PlatformIO `lib_deps`
+Modified files:
+- `src/main.py` — Added `/api/status`, `/api/tts/audio` endpoints; wired NLP+TTS+ConfidenceRouter into lifespan
+- `src/udp_server.py` — Accepts optional `router: ConfidenceRouter` parameter
 
-**Target**: 2-3 days to MVP verification (simulation data available immediately)
+### Conda Environments Ready
 
-Path B (PyTorch → TFLite INT8) deferred to Phase 3.5 Benchmark.
-
-### Parallel Work Tracks
-
-| Track | Status | Blocking? |
-|-------|--------|-----------|
-| Edge Impulse data collection (simulation) | Ready to start | **No** — synthetic data available |
-| Hardware verification (DM40B multimeter) | User action needed | **No** — simulation mode unblocks firmware |
-| TMAG5273 sensor installation | Awaiting delivery | **No** — reserved in simulation mode |
+| Environment | Python | PyTorch | Use Case | Relay Tests |
+|-------------|--------|---------|----------|-------------|
+| `pytorch21_env` | 3.9.25 | 2.1.0+cpu | ST-GCN training, relay dev | **133/133 ✓** |
+| `tf216` | 3.11.9 | 2.1.0+cpu | TFLite training, model export | **133/133 ✓** |
 
 ### Phase Status Summary
 
 | Phase | Name | Status |
 |-------|------|--------|
 | P0 | Project init | Done |
-| P1 | HAL & drivers | Done |
-| P2 | Signal processing | Done |
+| P1 | HAL & drivers | Done (code) — **needs hardware re-verify with new breadboard** |
+| P2 | Signal processing | Done (code) — **needs hardware re-verify** |
 | P3 | L1 Edge Inference — Pipeline + TDD | Done (42/44 native tests) |
 | P3.5 | Model Benchmark | Pending |
-| P4 | Communication (BLE/UDP/Protobuf) | Done (84/84 relay tests) |
-| P5 | Python Relay + L2 ST-GCN | **← ACTIVE** (84/84 tests, ST-GCN verified) |
+| P4 | Communication (BLE/UDP/Protobuf) | Done (133/133 relay tests) |
+| P5 | Python Relay + L2 ST-GCN + NLP + TTS | **Done** (133/133 tests) |
 | P6 | Web rendering / Unity Pro | Scaffold exists |
 | P7 | Integration testing | Pending |
+
+### Next Steps (ordered)
+
+1. **Hardware re-verify** (tomorrow): I2C scan on new breadboard → sensor validation → CSV output
+2. **Edge Impulse data collection** (Path A MVP): train L1 1D-CNN model
+3. **Model export**: TFLite → integrate into firmware
+4. **Phase 6**: React + R3F frontend (WebSocket consumer + 3D hand skeleton)
 
 ---
 

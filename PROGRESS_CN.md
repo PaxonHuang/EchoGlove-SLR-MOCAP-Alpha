@@ -1,6 +1,6 @@
 # PROGRESS_CN.md — 跨会话状态追踪器
 
-**最后更新**: 2026-05-22
+**最后更新**: 2026-05-28
 
 ---
 
@@ -128,7 +128,7 @@ ESP32-S3 通过 USB CDC 连接到 Ubuntu (`/dev/ttyACM0`)。硬件部分接线�
 | 1 | `/dev/ttyACM0` 权限拒绝 | 安装 udev 规则 (`/etc/udev/rules.d/99-platformio-udev.rules`)，添加到 `dialout` 组 |
 | 2 | ESP32-S3 USB CDC 串口启动后无输出 | 在 `platformio.ini` 中添加 `-DARDUINO_USB_CDC_ON_BOOT=1` |
 | 3 | 核心转储校验和错误阻止闪存写入 | 上传前使用 `pio run -t erase` 擦除闪存 |
-| 4 | I2C 扫描器挂起 (ESP-IDF 在 NACK 时阻塞) | 减少扫描范围至最小地址测试 (0x70, 0x4A, 0x22) |
+| 4 | I2C 扫描器挂起 (ESP-IDF 在 NACK 时阻塞) | 减少扫描范围至最小地址测试 (0x70, 0x4B, 0x22) |
 | 5 | 编译错误：浮点类型标量初始化器周围的花括号 | 移除 `PROGMEM`，对 GestureSignature 数组使用双层花括号语法 `{{...}, ...}` |
 
 ### 硬件配置更新 (2026-05-21)
@@ -136,8 +136,8 @@ ESP32-S3 通过 USB CDC 连接到 Ubuntu (`/dev/ttyACM0`)。硬件部分接线�
 - **上拉电阻变更**: 主总线 5.1kΩ → **2kΩ** (更接近 SOP 2.2kΩ 规范，400kHz 时上升时间更快)
 - **通道修复**: 固件 `MuxChannels::BNO085_IMU` 从 7 更改为 **5** 以匹配硬件接线 (SD5/SC5)
 - **Ch5 子总线上拉电阻**: 在 SD5/SC5→3.3V 安装 **5.1kΩ** 用于 GY-BNO085
-- **硬件说明**: 使用 **PCA9548A** (NXP，与 TCA9548A 寄存器兼容) 和 **GY-BNO085** (Adafruit  breakout，可能有板载上拉电阻)
-- **Ch0-4 子总线上拉电阻**: 未安装 (TMAG5273 尚未到货)。主总线 2kΩ 通过 PCA9548A 内部开关传递 — 测试足够。
+- **硬件说明**: 多路复用器实际为 **Adafruit TCA9548A 1-to-8 I2C 多路复用器扩展板**（非裸 PCA9548A DIP 芯片）。IMU 为 **7Semi GY-BNO085** 模块。
+- **Ch0-4 子总线上拉电阻**: 未安装 (TMAG5273 尚未到货)。主总线 2kΩ 通过 TCA9548A 内部开关传递 — 测试足够。
 
 ### 仿真模式实现
 
@@ -162,61 +162,91 @@ ESP32-S3 通过 USB CDC 连接到 Ubuntu (`/dev/ttyACM0`)。硬件部分接线�
 | `docs/HARDWARE_WIRING_DEBUG_GUIDE_DM40B.md` | 已创建 — DM40B 万用表接线验证指南 |
 | `docs/SESSION_SUMMARY_2026-05-20_HARDWARE_DEBUG_SIMULATION.md` | 已创建 — 完整会议总结 |
 
-### 硬件问题 — 未解决
+### 硬件调试历史 — 已解决 (2026-05-26)
 
-I2C 设备（0x70 的 TCA9548A，0x4A 的 BNO085）返回 NACK。怀疑原因：
-- 设备可能未通电（无 LED 可见）
-- 接线可能未正确连接
-- ~~5.1kΩ 上拉电阻~~ → 已修复：现为 2kΩ（适用于 400kHz Fast Mode，3.3V）
-- ~~通道不匹配（代码=7，硬件=5）~~ → 已修复：代码更改为通道 5
+**通过系统性隔离测试确定了根本原因：**
 
-**下一步行动**: 遵循 DM40B 万用表接线调试指南验证物理连接
+| 日期 | 发现 |
+|------|------|
+| 2026-05-22 | 第一块 I2C 多路复用器（裸 PCA9548A DIP-16）损坏 — 内部 SDA↔SCL 短路 (0.82kΩ) |
+| 2026-05-24 | 发现实际硬件为 **Adafruit TCA9548A 扩展板**（非裸 PCA9548A）— 修正了引脚假设 |
+| 2026-05-25 | 第二块 Adafruit TCA9548A 也失败 — 全部 NACK。通过直连 BNO085 旁路测试确认为 **损坏模块** |
+| 2026-05-25 | **BNO085 确认可用**，地址为 **0x4B**（非 0x4A），固件已更新 |
+| 2026-05-26 | 第三块 TCA9548A (PW548A TI 芯片) 安装。绕过面包板直连测试：**TCA9548A 在 0x70 确认 ACK** |
+
+**根本原因**: **面包板接触不良**。所有 3 块多路复用器模块可能都是正常的 — 面包板弹簧夹在多次插拔后退化，导致 I2C 信号间歇性断开。物理总线测试（GPIO 翻转 + 上拉恢复）通过，但 I2C 协议失败，因为面包板在信号层面引入了电阻/间歇性问题。
+
+**关键诊断证据：**
+- 物理总线测试：SDA/SCL 翻转正常，恢复 0µs → 上拉电阻和 GPIO 完好
+- 硬件 I2C：全部 NACK/TIMEOUT → 协议层失败
+- 位操作 I2C：全部 NACK → 同样问题，排除 ESP32 外设问题
+- **绕过面包板用杜邦线直连：TCA9548A 在 0x70 被找到 ✓** → 确认面包板为根本原因
+
+**当前硬件状态：**
+- **Adafruit TCA9548A (PW548A 芯片)**: **正常工作** — 通过杜邦线直连确认
+- **BNO085**: 在地址 **0x4B** 正常工作，固件已更新
+- **TMAG5273 霍尔传感器**: 尚未安装（等待新面包板 + 子总线上拉电阻）
+- **I2C 总线**: 绕过面包板后确认正常工作
+
+**需要操作**: 购买新面包板、新杜邦线，重新组装。用户今晚采购 (2026-05-26)。
 
 ---
 
 ## 当前工作
 
-**当前**: 第三阶段 — L1 边缘推理 (Edge Impulse MVP 路径 A)
+**当前**: Phase 5 Python Relay Server 已完成（133/133 测试）。硬件测试暂停 — 用户正在采购新组件（面包板、杜邦线、TCA9548A、TMAG5273 替换件）。明天：Phase 1–4 硬件重新验证。
 
-仿真模式可运行。可以在硬件调试继续并行进行的同时，使用合成数据进行 Edge Impulse 数据收集。
+### Phase 5 完成总结 (2026-05-28)
 
-### 优先级: 路径 A — Edge Impulse MVP (快速验证)
+| 组件 | 测试 | 状态 |
+|------|------|------|
+| Protobuf 解析器 | 19/19 | 完成 |
+| UDP 服务器 | 23/23 | 完成 |
+| WebSocket 管理器 | 15/15 | 完成 |
+| ST-GCN 模型 | 27/27 | 完成 |
+| NLP 语法纠正器 | 15/15 | 完成 |
+| TTS 引擎 | 13/13 | 完成 |
+| ConfidenceRouter | 11/11 | 完成 |
+| 集成测试 | 10/10 | 完成 |
+| **总计** | **133/133** | **全部通过** |
 
-根据 SOP §6.1，ESP32 CSV 输出已兼容 `edge-impulse-data-forwarder`。步骤如下：
+新建文件：
+- `src/confidence_router.py` — L1→L2 置信度驱动路由（从 UDPServer 提取）
+- `tests/test_tts_engine.py` — TTS 引擎测试（通过 sys.modules 注入模拟 edge_tts）
+- `tests/test_confidence_router.py` — 路由逻辑测试
+- `tests/test_integration.py` — FastAPI 应用生命周期测试
 
-1. ✅ 安装 edge-impulse-cli: `npm install -g edge-impulse-cli`
-2. ✅ 固件在仿真模式下输出 CSV（20 个手势类别）
-3. **→ 下一步**: 启动数据转发器: `edge-impulse-data-forwarder --baud-rate 115200 --frequency 100`
-4. 在 Edge Impulse Studio 中收集带标签的手势数据（每个手势 30-60 个样本）
-5. 训练 1D-CNN 分类器（200 epochs, lr=0.001）
-6. 导出为 Arduino 库 → 通过 PlatformIO `lib_deps` 集成
+修改文件：
+- `src/main.py` — 添加 `/api/status`、`/api/tts/audio` 端点；将 NLP+TTS+ConfidenceRouter 接入 lifespan
+- `src/udp_server.py` — 接受可选的 `router: ConfidenceRouter` 参数
 
-**目标**: 2-3 天内完成 MVP 验证（立即可用仿真数据）
+### Conda 环境已就绪
 
-路径 B (PyTorch → TFLite INT8) 推迟至 Phase 3.5 基准测试阶段。
-
-### 并行工作轨道
-
-| 轨道 | 状态 | 阻塞? |
-|-------|--------|-----------|
-| Edge Impulse 数据收集（仿真） | 准备开始 | **否** — 合成数据可用 |
-| 硬件验证（DM40B 万用表） | 需要用户操作 | **否** — 仿真模式解除固件阻塞 |
-| TMAG5273 传感器安装 | 等待到货 | **否** — 在仿真模式下保留 |
+| 环境 | Python | PyTorch | 用途 | 中继测试 |
+|------|--------|---------|------|----------|
+| `pytorch21_env` | 3.9.25 | 2.1.0+cpu | ST-GCN 训练、中继开发 | **133/133 ✓** |
+| `tf216` | 3.11.9 | 2.1.0+cpu | TFLite 训练、模型导出 | **133/133 ✓** |
 
 ### 阶段状态汇总
 
 | 阶段 | 名称 | 状态 |
-|-------|------|--------|
+|------|------|------|
 | P0 | 项目初始化 | 已完成 |
-| P1 | HAL & 驱动 | 已完成 |
-| P2 | 信号处理 | 已完成 |
+| P1 | HAL & 驱动 | 已完成（代码）— **需用新面包板重新验证硬件** |
+| P2 | 信号处理 | 已完成（代码）— **需用新面包板重新验证** |
 | P3 | L1 边缘推理 — 管道 + TDD | 已完成（42/44 原生测试） |
 | P3.5 | 模型基准测试 | 待定 |
-| P4 | 通信 (BLE/UDP/Protobuf) | 已完成（84/84 中继测试） |
-| P5 | Python Relay + L2 ST-GCN | **← 活跃**（84/84 测试，ST-GCN 已验证） |
+| P4 | 通信 (BLE/UDP/Protobuf) | 已完成（133/133 中继测试） |
+| P5 | Python Relay + L2 ST-GCN + NLP + TTS | **已完成**（133/133 测试） |
 | P6 | Web 渲染 / Unity Pro | 已有脚手架 |
 | P7 | 集成测试 | 待定 |
 
+### 下一步（按顺序）
+
+1. **硬件重新验证**（明天）：新面包板 I2C 扫描 → 传感器验证 → CSV 输出
+2. **Edge Impulse 数据收集**（路径 A MVP）：训练 L1 1D-CNN 模型
+3. **模型导出**：TFLite → 集成到固件
+4. **Phase 6**：React + R3F 前端（WebSocket 消费者 + 3D 手部骨架）
 ---
 
 ## 第三阶段: L1 边缘推理 — TDD 完成 (2026-05-22)
